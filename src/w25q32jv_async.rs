@@ -372,6 +372,11 @@ where
     /// Puts the chip into power down mode.
     /// While in the power-down state, only the Release Power-down/Device ID (0xAB) instruction will be recognized. This instruction restores the device to normal operation. All other instructions are ignored.
     pub async fn enable_power_down_mode_async(&mut self) -> Result<(), Error<S, P>> {
+
+        // Wait until the chip is idle 
+        while self.busy_async().await? {}
+
+        // Power it down safely
         self.spi
             .write(&[Command::PowerDown as u8])
             .await
