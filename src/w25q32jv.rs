@@ -73,6 +73,28 @@ where
         Ok(StatusAndControlRegister1::from_bytes(buf[1].to_le_bytes()))
     }
 
+    fn read_status_register_2(&mut self) -> Result<StatusAndControlRegister2, Error<S, P>> {
+        let mut buf: [u8; 2] = [0; 2];
+        buf[0] = Command::ReadStatusRegister2 as u8;
+
+        self.spi
+            .transfer_in_place(&mut buf)
+            .map_err(Error::SpiError)?;
+
+        Ok(StatusAndControlRegister2::from_bytes(buf[1].to_le_bytes()))
+    }
+
+    fn read_status_register_3(&mut self) -> Result<StatusAndControlRegister3, Error<S, P>> {
+        let mut buf: [u8; 2] = [0; 2];
+        buf[0] = Command::ReadStatusRegister3 as u8;
+
+        self.spi
+            .transfer_in_place(&mut buf)
+            .map_err(Error::SpiError)?;
+
+        Ok(StatusAndControlRegister3::from_bytes(buf[1].to_le_bytes()))
+    }    
+
     /// The flash chip is unable to perform new commands while it is still working on a previous one. Especially erases take a long time.
     /// This function returns true while the chip is unable to respond to commands (with the exception of the busy command).
     fn busy(&mut self) -> Result<bool, Error<S, P>> {
@@ -81,6 +103,10 @@ where
 
     fn write_enabled(&mut self) -> Result<bool, Error<S, P>> {
         Ok((self.read_status_register_1()?.writeEnableLatch()) != 0)
+    }
+
+    fn suspend_status(&mut self) -> Result<bool, Error<S, P>> {
+        Ok((self.read_status_register_2()?.eraseProgramSuspendStatus()) != 0)
     }
 
     /// Request the 64 bit id that is unique to this chip.
@@ -95,8 +121,33 @@ where
         Ok(TryFrom::try_from(&buf[5..]).unwrap())
     }
 
+    // Resumes any suspended operation
+    pub fn resume_operation(&mut self) -> Result<(), Error<S, P>> {
+
+        // Wait until the chip is idle 
+        while self.busy()? {}
+        
+        // We could check the eraseProgramSuspendStatus (sus) register, but since the resume command is ignored if no operations are pending it doesn't really matter. 
+
+        self.spi
+            .write(&[Command::EraseProgramResume as u8])
+            .map_err(Error::SpiError)?;
+        Ok(())
+    }
+    
     /// Reset the chip
     pub fn reset(&mut self) -> Result<(), Error<S, P>> {
+
+        // Check the SUS bit if there are any suspended actions 
+        if self.suspend_status()? {
+            // Resume to prevent corruption.
+            self.resume_operation()?;
+        }
+
+        // Wait until the chip is idle 
+        while self.busy()? {}
+
+        // Now we can safely reset the chip
         self.spi
             .write(&[Command::EnableReset as u8])
             .map_err(Error::SpiError)?;
@@ -117,6 +168,9 @@ where
         if address + buf.len() as u32 > CAPACITY {
             return Err(Error::OutOfBounds);
         }
+
+        // Wait until the chip is idle 
+        while self.busy()? {}
 
         self.spi
             .transaction(&mut [
@@ -181,6 +235,9 @@ where
         if (address & 0x000000FF) + buf.len() as u32 > PAGE_SIZE {
             return Err(Error::OutOfBounds);
         }
+
+        // Wait until the chip is idle 
+        while self.busy()? {}
 
         self.enable_write()?;
 
@@ -286,6 +343,9 @@ where
             return Err(Error::OutOfBounds);
         }
 
+        // Wait until the chip is idle
+        while self.busy()? {}
+
         self.enable_write()?;
 
         let address: u32 = index * BLOCK_32K_SIZE;
@@ -314,6 +374,9 @@ where
             return Err(Error::OutOfBounds);
         }
 
+        // Wait until the chip is idle
+        while self.busy()? {}
+
         self.enable_write()?;
 
         let address: u32 = index * BLOCK_64K_SIZE;
@@ -336,6 +399,9 @@ where
     /// Erases all sectors on the flash chip.
     /// This is a very expensive operation.
     pub fn erase_chip(&mut self) -> Result<(), Error<S, P>> {
+        // Wait until the chip is idle
+        while self.busy()? {}
+        
         self.enable_write()?;
 
         self.spi

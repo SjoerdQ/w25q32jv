@@ -98,6 +98,10 @@ where
         Ok((self.read_status_register_1_async().await?.writeEnableLatch()) != 0)
     }
 
+    async fn suspend_status_async(&mut self) -> Result<bool, Error<S, P>> {
+        Ok((self.read_status_register_2_async().await?.eraseProgramSuspendStatus()) != 0)
+    }
+
     /// Request the 64 bit id that is unique to this chip.
     pub async fn device_id_async(&mut self) -> Result<[u8; 8], Error<S, P>> {
         let mut buf: [u8; 13] = [0; 13];
@@ -111,14 +115,32 @@ where
         Ok(TryFrom::try_from(&buf[5..]).unwrap())
     }
 
-    /// Reset the chip
-    pub async fn reset_async(&mut self) -> Result<(), Error<S, P>> {
-
+    // Resumes any suspended operation
+    pub async fn resume_operation_async(&mut self) -> Result<(), Error<S, P>> {
 
         // Wait until the chip is idle 
         while self.busy_async().await? {}
+        
+        // We could check the eraseProgramSuspendStatus (sus) register, but since the resume command is ignored if no operations are pending it doesn't really matter. 
 
-        // Todo: Check the SUS bit (2nd byte from status register)
+        self.spi
+            .write(&[Command::EraseProgramResume as u8])
+            .await
+            .map_err(Error::SpiError)?;
+        Ok(())
+    }
+
+    /// Reset the chip
+    pub async fn reset_async(&mut self) -> Result<(), Error<S, P>> {
+
+        // Check the SUS bit if there are any suspended actions 
+        if self.suspend_status_async().await? {
+            // Resume to prevent corruption.
+            self.resume_operation_async().await?;
+        }
+
+        // Wait until the chip is idle 
+        while self.busy_async().await? {}
 
         self.spi
             .write(&[Command::EnableReset as u8])
@@ -216,6 +238,7 @@ where
             return Err(Error::OutOfBounds);
         }
 
+        // Wait until the chip is idle 
         while self.busy_async().await? {}
 
         self.enable_write_async().await?;
@@ -306,6 +329,9 @@ where
             return Err(Error::OutOfBounds);
         }
 
+        // Wait until the chip is idle 
+        while self.busy_async().await? {}        
+
         self.enable_write_async().await?;
 
         let address: u32 = index * SECTOR_SIZE;
@@ -335,6 +361,9 @@ where
         if index >= N_BLOCKS_32K {
             return Err(Error::OutOfBounds);
         }
+
+        // Wait until the chip is idle 
+        while self.busy_async().await? {}            
 
         self.enable_write_async().await?;
 
@@ -366,6 +395,9 @@ where
             return Err(Error::OutOfBounds);
         }
 
+        // Wait until the chip is idle 
+        while self.busy_async().await? {}            
+
         self.enable_write_async().await?;
 
         let address: u32 = index * BLOCK_64K_SIZE;
@@ -390,6 +422,9 @@ where
     /// Erases all sectors on the flash chip.
     /// This is a very expensive operation.
     pub async fn erase_chip_async(&mut self) -> Result<(), Error<S, P>> {
+        // Wait until the chip is idle 
+        while self.busy_async().await? {}    
+
         self.enable_write_async().await?;
 
         self.spi
