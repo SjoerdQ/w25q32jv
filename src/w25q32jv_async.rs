@@ -91,11 +91,11 @@ where
     /// The flash chip is unable to perform new commands while it is still working on a previous one. Especially erases take a long time.
     /// This function returns true while the chip is unable to respond to commands (with the exception of the busy command).
     async fn busy_async(&mut self) -> Result<bool, Error<S, P>> {
-        Ok((self.read_status_register_1_async().await?.Busy()) != 0)
+        Ok((self.read_status_register_1_async().await?.busy()) != 0)
     }
 
     async fn write_enabled_async(&mut self) -> Result<bool, Error<S, P>> {
-        Ok((self.read_status_register_1_async().await?.WriteEnableLatch()) != 0)
+        Ok((self.read_status_register_1_async().await?.writeEnableLatch()) != 0)
     }
 
     /// Request the 64 bit id that is unique to this chip.

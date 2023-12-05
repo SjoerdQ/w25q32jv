@@ -62,7 +62,7 @@ where
     S: Debug,
     P: Debug,
 {
-    fn read_status_register(&mut self) -> Result<u8, Error<S, P>> {
+    fn read_status_register_1(&mut self) -> Result<StatusAndControlRegister1, Error<S, P>> {
         let mut buf: [u8; 2] = [0; 2];
         buf[0] = Command::ReadStatusRegister1 as u8;
 
@@ -70,17 +70,17 @@ where
             .transfer_in_place(&mut buf)
             .map_err(Error::SpiError)?;
 
-        Ok(buf[1])
+        Ok(StatusAndControlRegister1::from_bytes(buf[1].to_le_bytes()))
     }
 
     /// The flash chip is unable to perform new commands while it is still working on a previous one. Especially erases take a long time.
     /// This function returns true while the chip is unable to respond to commands (with the exception of the busy command).
     fn busy(&mut self) -> Result<bool, Error<S, P>> {
-        Ok((self.read_status_register()? & 0x01) != 0)
+        Ok((self.read_status_register_1()?.busy()) != 0)
     }
 
     fn write_enabled(&mut self) -> Result<bool, Error<S, P>> {
-        Ok((self.read_status_register()? & 0x02) != 0)
+        Ok((self.read_status_register_1()?.writeEnableLatch()) != 0)
     }
 
     /// Request the 64 bit id that is unique to this chip.
