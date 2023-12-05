@@ -22,6 +22,9 @@ Defmt is also supported through the `defmt` feature.
 
 ### Unreleased
 
+- Added more checks for the busy register before performing an read/write or erase operation.
+- Reworked the handling of the status and control registers
+
 ### [0.3.2] - 2023-11-13 
 
 - Added functions to use the power down mode of the W25Q32JV.
