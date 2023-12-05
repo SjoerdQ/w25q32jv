@@ -52,7 +52,7 @@ where
     S: Debug,
     P: Debug,
 {
-    async fn read_status_register_async(&mut self) -> Result<u8, Error<S, P>> {
+    async fn read_status_register_1_async(&mut self) -> Result<StatusAndControlRegister1, Error<S, P>> {
         let mut buf: [u8; 2] = [0; 2];
         buf[0] = Command::ReadStatusRegister1 as u8;
 
@@ -61,17 +61,41 @@ where
             .await
             .map_err(Error::SpiError)?;
 
-        Ok(buf[1])
+        Ok(StatusAndControlRegister1::from_bytes(buf[1].to_le_bytes()))
     }
+
+    async fn read_status_register_2_async(&mut self) -> Result<StatusAndControlRegister2, Error<S, P>> {
+        let mut buf: [u8; 2] = [0; 2];
+        buf[0] = Command::ReadStatusRegister2 as u8;
+
+        self.spi
+            .transfer_in_place(&mut buf)
+            .await
+            .map_err(Error::SpiError)?;
+
+        Ok(StatusAndControlRegister2::from_bytes(buf[1].to_le_bytes()))
+    }
+
+    async fn read_status_register_3_async(&mut self) -> Result<StatusAndControlRegister3, Error<S, P>> {
+        let mut buf: [u8; 2] = [0; 2];
+        buf[0] = Command::ReadStatusRegister3 as u8;
+
+        self.spi
+            .transfer_in_place(&mut buf)
+            .await
+            .map_err(Error::SpiError)?;
+
+        Ok(StatusAndControlRegister3::from_bytes(buf[1].to_le_bytes()))
+    }    
 
     /// The flash chip is unable to perform new commands while it is still working on a previous one. Especially erases take a long time.
     /// This function returns true while the chip is unable to respond to commands (with the exception of the busy command).
     async fn busy_async(&mut self) -> Result<bool, Error<S, P>> {
-        Ok((self.read_status_register_async().await? & 0x01) != 0)
+        Ok((self.read_status_register_1_async().await?.Busy()) != 0)
     }
 
     async fn write_enabled_async(&mut self) -> Result<bool, Error<S, P>> {
-        Ok((self.read_status_register_async().await? & 0x02) != 0)
+        Ok((self.read_status_register_1_async().await?.WriteEnableLatch()) != 0)
     }
 
     /// Request the 64 bit id that is unique to this chip.
@@ -89,6 +113,13 @@ where
 
     /// Reset the chip
     pub async fn reset_async(&mut self) -> Result<(), Error<S, P>> {
+
+
+        // Wait until the chip is idle 
+        while self.busy_async().await? {}
+
+        // Todo: Check the SUS bit (2nd byte from status register)
+
         self.spi
             .write(&[Command::EnableReset as u8])
             .await
@@ -111,6 +142,9 @@ where
         if address + buf.len() as u32 > CAPACITY {
             return Err(Error::OutOfBounds);
         }
+
+        // Wait until the chip is idle 
+        while self.busy_async().await? {}
 
         self.spi
             .transaction(&mut [
@@ -154,7 +188,7 @@ where
             return Err(Error::OutOfBounds);
         }
 
-        // Write first chunk, taking into account that given addres might
+        // Write first chunk, taking into account that given address might
         // point to a location that is not on a page boundary,
         let chunk_len = (PAGE_SIZE - (address & 0x000000FF)) as usize;
         let chunk_len = chunk_len.min(buf.len());
@@ -181,6 +215,8 @@ where
         if (address & 0x000000FF) + buf.len() as u32 > PAGE_SIZE {
             return Err(Error::OutOfBounds);
         }
+
+        while self.busy_async().await? {}
 
         self.enable_write_async().await?;
 
@@ -250,6 +286,9 @@ where
 
         let start_sector = start_address / SECTOR_SIZE;
         let end_sector = end_address / SECTOR_SIZE;
+
+        // Wait until the chip is idle 
+        while self.busy_async().await? {}
 
         for sector in start_sector..end_sector {
             self.erase_sector_async(sector).await.unwrap();
@@ -388,10 +427,15 @@ where
     /// Releases the chip from power down mode.
     /// Restores operation from power down mode by reading the deviceID from the device.
     pub async fn disable_power_down_mode_async(&mut self) -> Result<(), Error<S, P>> {
-        self.spi
-            .write(&[Command::ReleasePowerDown as u8])
-            .await
-            .map_err(Error::SpiError)?;
+
+        while let Err(_) = self.spi.write(&[Command::ReadStatusRegister1 as u8]).await {
+            
+            self.spi
+                .write(&[Command::ReleasePowerDown as u8])
+                .await
+                .map_err(Error::SpiError)?;
+
+        }
 
         Ok(())
     }
